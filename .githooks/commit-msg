@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+set -eu
+
+MSG_FILE="${1:-}"
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+  echo "ERROR: commit-msg hook requires a commit message file." >&2
+  exit 1
+fi
+
+SUBJECT="$(head -n 1 "$MSG_FILE")"
+PATTERN='^(feat|fix|docs|chore|ci|test|refactor)(\([a-z0-9._-]+\))?(!)?: .+'
+
+if ! printf '%s\n' "$SUBJECT" | grep -Eq "$PATTERN"; then
+  echo "ERROR: Invalid commit message subject:" >&2
+  echo "  \"$SUBJECT\"" >&2
+  echo "" >&2
+  echo "Expected Conventional Commits format:" >&2
+  echo "  <type>[optional (scope)][!]: <imperative summary>" >&2
+  echo "Allowed types: feat, fix, docs, chore, ci, test, refactor" >&2
+  exit 1
+fi

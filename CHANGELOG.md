@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-14
+
 ### Added
 - Project specification (`docs/SPEC.md`), roadmap (`docs/ROADMAP.md`), `AGENTS.md`, `README.md`, and `CHANGELOG.md`.
 - Read-only `lazyproject` Rust CLI and `ratatui` TUI with tabular project view (`Host | Project | Branch | Sync | Tree | Size | Age`).
