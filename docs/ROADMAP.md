@@ -3,7 +3,10 @@
 To ship a fast, reliable, and usable tool quickly, **v0.1.0 is strictly scoped**. Ideas outside v0.1.0 are explicitly deferred to later releases.
 
 ## v0.1.0 — Core Read-Only Overview (Current Milestone)
-- [x] Project spec, roadmap, `AGENTS.md`, `README.md`, `CHANGELOG.md`
+- [x] Tabular project list with aligned columns (`Host | Project | Branch | Sync | Tree | Size | Age`)
+- [x] Live per-row fetch status indicator (spinner while fetching, red dot on failure)
+- [x] Background non-blocking disk usage + safely reclaimable dependency size (`node_modules`, `target`, `.venv`, etc.)
+- [x] Global `n` toggle for non-git projects; `Enter` to focus/scroll Inspector
 - [ ] Rust CLI & TUI (`ratatui` + `crossterm`)
 - [ ] Depth-1 workspace scanner with non-git collapsing (`+ N projects not on Git`)
 - [ ] Activity-based sorting (most recently changed at top)

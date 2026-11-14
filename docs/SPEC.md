@@ -43,20 +43,24 @@ Running `lazyproject` in any directory (or passing a path `lazyproject [PATH]`) 
 
 ### 4.1 Sorting ("Most Recently Changed at the Top")
 Git projects are sorted in descending order by **last activity timestamp**:
-- `last_activity = max(head_commit_timestamp, working_tree_activity_timestamp)`
-- `working_tree_activity_timestamp` is computed fast without walking `node_modules`/`target`/`.git`:
-  - `.git/index` mtime (captures staging/git operations)
-  - Depth-1 file/dir mtimes inside the project (excluding `.git`, `node_modules`, `target`, `.venv`, `dist`, `build`)
+- **Clean git repos**: `HEAD` commit timestamp (never `.git/index` mtime, because running `git status` refreshes the index stat cache and would falsely mark untouched repos as modified "just now").
+- **Dirty git repos**: `max(head_commit_timestamp, max_mtime_of_dirty_or_untracked_files)`.
+- **Non-git directories**: `max` of depth-1 entry mtimes (excluding `.DS_Store`).
 - Ties are broken alphabetically by directory name.
 
 ### 4.2 Attention Flags / Badges
-Projects display clear visual indicators in the list for:
-- **Dirty working tree**: modified, staged, or untracked files (`*` / counts)
+Projects display clear visual indicators in the table for:
+- **Dirty working tree**: compact counts (`+S` staged, `~M` modified, `?U` untracked, `!C` conflicted) or `✓` when clean.
 - **Ahead of remote**: unpushed local commits (`↑N`) — *unbacked up locally*
 - **Behind remote**: remote has commits not yet pulled (`↓N`) — *sync before editing*
-- **No remote configured**: local-only git repo (`no remote`)
+- **No remote configured**: local-only git repo (`LOC`)
 - **Detached HEAD**: (`detached`)
-- **Remote Provider**: `GitHub`, `GitLab`, `Bitbucket`, or `Git` (parsed from `origin` or first remote URL)
+- **Remote Provider**: `GH` (GitHub), `GL` (GitLab), `BB` (Bitbucket), `GIT` (other), or `LOC` (local-only)
+- **Live Fetch Status**: animated indicator while fetching (`⠋` / `●`), red dot (`●`) + error in Inspector if fetch failed.
+
+### 4.3 Disk Usage & Safely Reclaimable Space (Background)
+- Disk size and safely reclaimable dependency/build artifact size (`node_modules`, `target`, `.venv`, `venv`, `dist`, `build`, `.next`) are **never** computed synchronously on startup (to avoid slowing down initial render).
+- Instead, a low-priority background pass streams sizes into the UI after startup, showing total size in the table and reclaimable breakdown in the Inspector. Display-only; `lazyproject` never deletes files.
 
 ---
 
@@ -64,16 +68,11 @@ Projects display clear visual indicators in the list for:
 
 Two-pane layout (responsive to terminal width, with a bottom keybinding help bar):
 
-1. **Left Pane — Project List**:
+1. **Left Pane — Project Table**:
+   - Consistent aligned columns: `Host | Project | Branch | Sync | Tree | Size | Age`
+   - Live fetch indicator (spinner while fetching, red dot on failure)
    - Search/filter indicator when filtering (`/`)
-   - Each row shows:
-     - Project name
-     - Provider badge (`GH` / `GL` / `Local`)
-     - Current branch (or `detached`)
-     - Ahead/Behind (`↑2 ↓1`)
-     - Dirty indicator (`~3 +1 ?2` or clean `✓`)
-     - Relative last-activity time (`2h ago`, `3d ago`)
-   - Collapsed `+ N projects not on Git` row at the bottom.
+   - Non-git projects hidden by default with a footer/summary indicator (`+N non-git`), toggled globally with `n`.
 2. **Right Pane — Project Inspector**:
    - **Summary**: Full path, last activity, remote host & sanitized URL.
    - **Git Status**: Branch, tracking upstream, ahead/behind counts, staged/modified/untracked/conflicted counts, and last 3 commits (short SHA, relative time, subject).
@@ -94,7 +93,8 @@ Two-pane layout (responsive to terminal width, with a bottom keybinding help bar
 | `k` / `Up` | Move selection up |
 | `g` / `Home` | Jump to top |
 | `G` / `End` | Jump to bottom |
-| `Enter` / `Space` | Toggle expand/collapse on the non-git row (or open project if on a project? Let's make `Enter` toggle non-git row, `o` open in new terminal tab) |
+| `n` | Toggle showing/hiding non-Git directories |
+| `Enter` | Toggle focus / scroll Inspector pane |
 | `o` | Open selected project directory in a new terminal tab |
 | `f` | Fetch remote for selected git project (`git fetch --prune --no-tags` or `git fetch`) |
 | `F` | Fetch remotes for all git projects (concurrently) |

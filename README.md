@@ -39,7 +39,8 @@ lazyproject ~/Projects
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `g` / `G` | Jump to top / bottom |
-| `Enter` / `Space` | Expand/collapse non-git projects row |
+| `n` | Toggle showing non-git projects |
+| `Enter` | Focus / unfocus Inspector pane |
 | `o` | Open project in a new terminal tab/window |
 | `f` | Fetch remote for selected project |
 | `F` | Fetch remotes for all git projects |

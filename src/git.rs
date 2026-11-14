@@ -54,6 +54,7 @@ pub struct GitInfo {
     pub provider: RemoteProvider,
     pub last_commit_ts: Option<i64>,
     pub recent_commits: Vec<CommitSummary>,
+    pub dirty_paths: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -136,10 +137,18 @@ pub fn parse_porcelain_v2(output: &str, info: &mut GitInfo) {
                     info.behind = behind.parse::<u32>().unwrap_or(0);
                 }
             }
-        } else if line.starts_with("? ") {
+        } else if let Some(path) = line.strip_prefix("? ") {
             info.untracked += 1;
+            info.dirty_paths.push(path.trim().to_string());
         } else if line.starts_with("u ") {
             info.conflicted += 1;
+            if let Some(path) = line
+                .split('\t')
+                .next()
+                .and_then(|s| s.split_whitespace().last())
+            {
+                info.dirty_paths.push(path.to_string());
+            }
         } else if (line.starts_with("1 ") || line.starts_with("2 "))
             && let Some(xy) = line.split_whitespace().nth(1)
         {
@@ -151,6 +160,13 @@ pub fn parse_porcelain_v2(output: &str, info: &mut GitInfo) {
             }
             if y != '.' {
                 info.modified += 1;
+            }
+            if let Some(path) = line
+                .split('\t')
+                .next()
+                .and_then(|s| s.split_whitespace().last())
+            {
+                info.dirty_paths.push(path.to_string());
             }
         }
     }
@@ -212,6 +228,7 @@ pub fn inspect_git(repo_path: &Path) -> GitInfo {
         provider: RemoteProvider::None,
         last_commit_ts: None,
         recent_commits: Vec::new(),
+        dirty_paths: Vec::new(),
         error: None,
     };
 
@@ -333,6 +350,7 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt
             provider: RemoteProvider::None,
             last_commit_ts: None,
             recent_commits: Vec::new(),
+            dirty_paths: Vec::new(),
             error: None,
         };
         parse_porcelain_v2(sample, &mut info);

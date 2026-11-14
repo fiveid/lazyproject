@@ -7,8 +7,7 @@ use rayon::prelude::*;
 use crate::git::{GitInfo, inspect_git};
 use crate::toolchain::{ToolchainInfo, inspect_toolchain};
 
-const IGNORED_MTIME_DIRS: &[&str] = &[
-    ".git",
+const RECLAIMABLE_DIRS: &[&str] = &[
     "node_modules",
     "target",
     ".venv",
@@ -16,7 +15,16 @@ const IGNORED_MTIME_DIRS: &[&str] = &[
     "dist",
     "build",
     ".next",
+    ".nuxt",
+    ".turbo",
+    "__pycache__",
 ];
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiskUsage {
+    pub total_bytes: u64,
+    pub reclaimable_bytes: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct ProjectEntry {
@@ -41,24 +49,25 @@ fn modified_secs(path: &Path) -> Option<i64> {
     i64::try_from(dur.as_secs()).ok()
 }
 
-/// Fast activity timestamp: max of git HEAD commit time, .git/index mtime, and depth-1 entry mtimes.
-pub fn compute_activity_ts(project_path: &Path, git_commit_ts: Option<i64>) -> i64 {
-    let mut latest = git_commit_ts.unwrap_or(0);
-
-    if let Some(dir_ts) = modified_secs(project_path) {
-        latest = latest.max(dir_ts);
+/// Compute activity timestamp without touching `.git/index` (which `git status` updates).
+pub fn compute_activity_ts(project_path: &Path, git: Option<&GitInfo>) -> i64 {
+    if let Some(g) = git {
+        let mut latest = g.last_commit_ts.unwrap_or(0);
+        for rel in &g.dirty_paths {
+            let candidate = project_path.join(rel);
+            if let Some(ts) = modified_secs(&candidate) {
+                latest = latest.max(ts);
+            }
+        }
+        return latest;
     }
 
-    let git_index = project_path.join(".git").join("index");
-    if let Some(idx_ts) = modified_secs(&git_index) {
-        latest = latest.max(idx_ts);
-    }
-
+    // Non-git directory: max of depth-1 non-hidden entry mtimes, or directory mtime.
+    let mut latest = modified_secs(project_path).unwrap_or(0);
     if let Ok(entries) = fs::read_dir(project_path) {
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if IGNORED_MTIME_DIRS.contains(&name_str.as_ref()) {
+            if name.to_string_lossy() == ".DS_Store" {
                 continue;
             }
             if let Some(ts) = modified_secs(&entry.path()) {
@@ -66,8 +75,40 @@ pub fn compute_activity_ts(project_path: &Path, git_commit_ts: Option<i64>) -> i
             }
         }
     }
-
     latest
+}
+
+/// Compute total and safely reclaimable disk usage for a project directory (run in background).
+pub fn compute_disk_usage(root: &Path) -> DiskUsage {
+    fn walk(dir: &Path, inside_reclaimable: bool, usage: &mut DiskUsage) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                let name = entry.file_name();
+                let is_reclaimable = inside_reclaimable
+                    || RECLAIMABLE_DIRS.contains(&name.to_string_lossy().as_ref());
+                walk(&entry.path(), is_reclaimable, usage);
+            } else if meta.is_file() {
+                let len = meta.len();
+                usage.total_bytes = usage.total_bytes.saturating_add(len);
+                if inside_reclaimable {
+                    usage.reclaimable_bytes = usage.reclaimable_bytes.saturating_add(len);
+                }
+            }
+        }
+    }
+
+    let mut usage = DiskUsage::default();
+    walk(root, false, &mut usage);
+    usage
 }
 
 pub fn inspect_single_project(path: PathBuf) -> ProjectEntry {
@@ -83,8 +124,7 @@ pub fn inspect_single_project(path: PathBuf) -> ProjectEntry {
         None
     };
 
-    let commit_ts = git.as_ref().and_then(|g| g.last_commit_ts);
-    let last_activity_ts = compute_activity_ts(&path, commit_ts);
+    let last_activity_ts = compute_activity_ts(&path, git.as_ref());
     let toolchain = inspect_toolchain(&path);
 
     ProjectEntry {
@@ -197,5 +237,17 @@ mod tests {
         assert!(res.git_projects.is_empty());
         assert_eq!(res.non_git_projects.len(), 1);
         assert_eq!(res.non_git_projects[0].name, "plain-folder");
+    }
+
+    #[test]
+    fn computes_total_and_reclaimable_disk_usage() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join("src.rs"), vec![b'a'; 100]).unwrap();
+        fs::create_dir(tmp.path().join("node_modules")).unwrap();
+        fs::write(tmp.path().join("node_modules/pkg.js"), vec![b'b'; 250]).unwrap();
+
+        let usage = compute_disk_usage(tmp.path());
+        assert_eq!(usage.total_bytes, 350);
+        assert_eq!(usage.reclaimable_bytes, 250);
     }
 }

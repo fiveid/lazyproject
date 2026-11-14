@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -6,26 +7,39 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rayon::prelude::*;
 
 use crate::git::fetch_remote;
-use crate::scanner::{ProjectEntry, ScanResult, inspect_single_project, scan_workspace};
+use crate::scanner::{
+    DiskUsage, ProjectEntry, ScanResult, compute_disk_usage, inspect_single_project, scan_workspace,
+};
 use crate::terminal::open_in_new_tab;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisplayRow {
     Git(usize),
-    NonGitToggle,
     NonGit(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchState {
+    Idle,
+    Fetching,
+    Done,
+    Failed(String),
 }
 
 pub enum BgMessage {
     RescanDone(Result<ScanResult, String>),
-    FetchSingleDone {
+    DiskUsageComputed {
+        path: PathBuf,
+        usage: DiskUsage,
+    },
+    FetchRepoStarted(PathBuf),
+    FetchRepoFinished {
         path: PathBuf,
         result: Result<Box<ProjectEntry>, String>,
     },
-    FetchAllDone {
+    FetchAllComplete {
         succeeded: usize,
         failed: usize,
-        scan: Result<ScanResult, String>,
     },
 }
 
@@ -33,14 +47,19 @@ pub struct AppState {
     pub root: PathBuf,
     pub git_projects: Vec<ProjectEntry>,
     pub non_git_projects: Vec<ProjectEntry>,
-    pub non_git_expanded: bool,
+    pub show_non_git: bool,
     pub selected: usize,
+    pub inspector_focused: bool,
+    pub inspector_scroll: u16,
     pub filter_active: bool,
     pub filter_query: String,
     pub show_help: bool,
     pub busy: bool,
+    pub tick: usize,
     pub status_message: String,
     pub should_quit: bool,
+    pub fetch_states: HashMap<PathBuf, FetchState>,
+    pub disk_usage: HashMap<PathBuf, DiskUsage>,
     bg_tx: Sender<BgMessage>,
     bg_rx: Receiver<BgMessage>,
 }
@@ -49,21 +68,47 @@ impl AppState {
     pub fn new(scan: ScanResult) -> Self {
         let (bg_tx, bg_rx) = mpsc::channel();
         let count = scan.git_projects.len();
-        Self {
+        let state = Self {
             root: scan.root,
             git_projects: scan.git_projects,
             non_git_projects: scan.non_git_projects,
-            non_git_expanded: false,
+            show_non_git: false,
             selected: 0,
+            inspector_focused: false,
+            inspector_scroll: 0,
             filter_active: false,
             filter_query: String::new(),
             show_help: false,
             busy: false,
+            tick: 0,
             status_message: format!("Loaded {count} git projects (read-only)"),
             should_quit: false,
+            fetch_states: HashMap::new(),
+            disk_usage: HashMap::new(),
             bg_tx,
             bg_rx,
+        };
+        state.spawn_disk_usage_scan();
+        state
+    }
+
+    fn spawn_disk_usage_scan(&self) {
+        let paths: Vec<PathBuf> = self
+            .git_projects
+            .iter()
+            .chain(self.non_git_projects.iter())
+            .map(|p| p.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
         }
+        let tx = self.bg_tx.clone();
+        thread::spawn(move || {
+            paths.into_par_iter().for_each(|path| {
+                let usage = compute_disk_usage(&path);
+                let _ = tx.send(BgMessage::DiskUsageComputed { path, usage });
+            });
+        });
     }
 
     pub fn display_rows(&self) -> Vec<DisplayRow> {
@@ -77,18 +122,9 @@ impl AppState {
             }
         }
 
-        let matching_non_git: Vec<usize> = self
-            .non_git_projects
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| matches(p))
-            .map(|(i, _)| i)
-            .collect();
-
-        if !matching_non_git.is_empty() {
-            rows.push(DisplayRow::NonGitToggle);
-            if self.non_git_expanded {
-                for i in matching_non_git {
+        if self.show_non_git {
+            for (i, proj) in self.non_git_projects.iter().enumerate() {
+                if matches(proj) {
                     rows.push(DisplayRow::NonGit(i));
                 }
             }
@@ -102,7 +138,6 @@ impl AppState {
         match rows.get(self.selected)? {
             DisplayRow::Git(i) => self.git_projects.get(*i),
             DisplayRow::NonGit(i) => self.non_git_projects.get(*i),
-            DisplayRow::NonGitToggle => None,
         }
     }
 
@@ -116,6 +151,8 @@ impl AppState {
     }
 
     pub fn poll_background(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+
         while let Ok(msg) = self.bg_rx.try_recv() {
             match msg {
                 BgMessage::RescanDone(Ok(scan)) => {
@@ -125,13 +162,19 @@ impl AppState {
                     self.clamp_selection();
                     self.status_message =
                         format!("Refreshed ({} git projects)", self.git_projects.len());
+                    self.spawn_disk_usage_scan();
                 }
                 BgMessage::RescanDone(Err(err)) => {
                     self.busy = false;
                     self.status_message = format!("Refresh error: {err}");
                 }
-                BgMessage::FetchSingleDone { path, result } => {
-                    self.busy = false;
+                BgMessage::DiskUsageComputed { path, usage } => {
+                    self.disk_usage.insert(path, usage);
+                }
+                BgMessage::FetchRepoStarted(path) => {
+                    self.fetch_states.insert(path, FetchState::Fetching);
+                }
+                BgMessage::FetchRepoFinished { path, result } => {
                     match result {
                         Ok(updated) => {
                             let name = updated.name.clone();
@@ -140,24 +183,31 @@ impl AppState {
                             {
                                 *slot = *updated;
                             }
-                            self.status_message = format!("Fetched {name}");
+                            self.fetch_states.insert(path, FetchState::Done);
+                            if !self.busy {
+                                self.status_message = format!("Fetched {name}");
+                            }
                         }
                         Err(err) => {
-                            self.status_message = format!("Fetch failed: {err}");
+                            self.fetch_states
+                                .insert(path, FetchState::Failed(err.clone()));
+                            if !self.busy {
+                                self.status_message = format!("Fetch failed: {err}");
+                            }
                         }
                     }
-                }
-                BgMessage::FetchAllDone {
-                    succeeded,
-                    failed,
-                    scan,
-                } => {
-                    self.busy = false;
-                    if let Ok(s) = scan {
-                        self.git_projects = s.git_projects;
-                        self.non_git_projects = s.non_git_projects;
-                        self.clamp_selection();
+                    // If this was a single-repo fetch, busy clears when no repos are Fetching
+                    if self.busy
+                        && !self
+                            .fetch_states
+                            .values()
+                            .any(|s| matches!(s, FetchState::Fetching))
+                    {
+                        self.busy = false;
                     }
+                }
+                BgMessage::FetchAllComplete { succeeded, failed } => {
+                    self.busy = false;
                     self.status_message =
                         format!("Fetched all: {succeeded} succeeded, {failed} failed");
                 }
@@ -204,6 +254,23 @@ impl AppState {
             return;
         }
 
+        if self.inspector_focused {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Tab => {
+                    self.inspector_focused = false;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.inspector_scroll = self.inspector_scroll.saturating_add(1);
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.inspector_scroll = self.inspector_scroll.saturating_sub(1);
+                }
+                KeyCode::Char('q') => self.should_quit = true,
+                _ => {}
+            }
+            return;
+        }
+
         let len = self.display_rows().len();
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
@@ -220,26 +287,40 @@ impl AppState {
             KeyCode::Char('j') | KeyCode::Down => {
                 if len > 0 && self.selected + 1 < len {
                     self.selected += 1;
+                    self.inspector_scroll = 0;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 if self.selected > 0 {
                     self.selected -= 1;
+                    self.inspector_scroll = 0;
                 }
             }
             KeyCode::Char('g') | KeyCode::Home => {
                 self.selected = 0;
+                self.inspector_scroll = 0;
             }
             KeyCode::Char('G') | KeyCode::End => {
                 if len > 0 {
                     self.selected = len - 1;
+                    self.inspector_scroll = 0;
                 }
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                let rows = self.display_rows();
-                if matches!(rows.get(self.selected), Some(DisplayRow::NonGitToggle)) {
-                    self.non_git_expanded = !self.non_git_expanded;
-                    self.clamp_selection();
+            KeyCode::Char('n') => {
+                self.show_non_git = !self.show_non_git;
+                self.clamp_selection();
+                self.status_message = if self.show_non_git {
+                    format!(
+                        "Showing {} non-git directories",
+                        self.non_git_projects.len()
+                    )
+                } else {
+                    format!("Hid {} non-git directories", self.non_git_projects.len())
+                };
+            }
+            KeyCode::Enter | KeyCode::Tab => {
+                if self.selected_project().is_some() {
+                    self.inspector_focused = true;
                 }
             }
             KeyCode::Char('o') => {
@@ -290,12 +371,13 @@ impl AppState {
         let path = proj.path.clone();
         let name = proj.name.clone();
         self.busy = true;
+        self.fetch_states.insert(path.clone(), FetchState::Fetching);
         self.status_message = format!("Fetching {name}...");
         let tx = self.bg_tx.clone();
         thread::spawn(move || {
             let result =
                 fetch_remote(&path).map(|()| Box::new(inspect_single_project(path.clone())));
-            let _ = tx.send(BgMessage::FetchSingleDone { path, result });
+            let _ = tx.send(BgMessage::FetchRepoFinished { path, result });
         });
     }
 
@@ -314,20 +396,26 @@ impl AppState {
             return;
         }
         self.busy = true;
+        for p in &paths {
+            self.fetch_states.insert(p.clone(), FetchState::Fetching);
+        }
         self.status_message = format!("Fetching {} repositories...", paths.len());
-        let root = self.root.clone();
         let tx = self.bg_tx.clone();
         thread::spawn(move || {
-            let results: Vec<Result<(), String>> =
-                paths.par_iter().map(|p| fetch_remote(p)).collect();
-            let succeeded = results.iter().filter(|r| r.is_ok()).count();
+            let results: Vec<bool> = paths
+                .into_par_iter()
+                .map(|path| {
+                    let _ = tx.send(BgMessage::FetchRepoStarted(path.clone()));
+                    let res = fetch_remote(&path)
+                        .map(|()| Box::new(inspect_single_project(path.clone())));
+                    let ok = res.is_ok();
+                    let _ = tx.send(BgMessage::FetchRepoFinished { path, result: res });
+                    ok
+                })
+                .collect();
+            let succeeded = results.iter().filter(|&&ok| ok).count();
             let failed = results.len() - succeeded;
-            let scan = scan_workspace(&root);
-            let _ = tx.send(BgMessage::FetchAllDone {
-                succeeded,
-                failed,
-                scan,
-            });
+            let _ = tx.send(BgMessage::FetchAllComplete { succeeded, failed });
         });
     }
 }
@@ -356,6 +444,7 @@ mod tests {
                     provider: crate::git::RemoteProvider::None,
                     last_commit_ts: None,
                     recent_commits: vec![],
+                    dirty_paths: vec![],
                     error: None,
                 })
             } else {
@@ -367,26 +456,21 @@ mod tests {
     }
 
     #[test]
-    fn non_git_row_collapses_and_expands() {
+    fn n_key_toggles_non_git_projects_globally() {
         let scan = ScanResult {
             root: PathBuf::from("/tmp"),
             git_projects: vec![dummy_proj("app", true)],
             non_git_projects: vec![dummy_proj("notes", false), dummy_proj("assets", false)],
         };
         let mut state = AppState::new(scan);
-        assert_eq!(
-            state.display_rows(),
-            vec![DisplayRow::Git(0), DisplayRow::NonGitToggle]
-        );
+        assert_eq!(state.display_rows(), vec![DisplayRow::Git(0)]);
 
-        state.selected = 1;
-        state.handle_key(KeyEvent::from(KeyCode::Enter));
-        assert!(state.non_git_expanded);
+        state.handle_key(KeyEvent::from(KeyCode::Char('n')));
+        assert!(state.show_non_git);
         assert_eq!(
             state.display_rows(),
             vec![
                 DisplayRow::Git(0),
-                DisplayRow::NonGitToggle,
                 DisplayRow::NonGit(0),
                 DisplayRow::NonGit(1),
             ]
