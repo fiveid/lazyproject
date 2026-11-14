@@ -1,4 +1,4 @@
-.PHONY: check test install-local clean
+.PHONY: check test install-local setup-hooks clean
 
 check:
 	cargo fmt --all -- --check
@@ -10,6 +10,9 @@ test:
 
 install-local:
 	./scripts/local-release.sh
+
+setup-hooks:
+	git config core.hooksPath .githooks
 
 clean:
 	cargo clean

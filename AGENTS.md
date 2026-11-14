@@ -29,8 +29,14 @@ cargo test --all-targets
 ```
 
 ## Git & Release Workflow
-- **Branches**: Always work on feature branches (`feat/...`, `fix/...`, `chore/...`).
-- **Merging**: Rebase merges into `main` only after CI passes (no merge commits).
-- **Commits**: Use Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `ci:`, `test:`, `refactor:`).
+- **Branches**: Always work on feature branches (`feat/...`, `fix/...`, `chore/...`, `docs/...`).
+- **Clean Commit History**:
+  - Keep PRs to **one clean, self-contained commit** (or a minimal sequence of distinct logical commits).
+  - When iterating on a PR (e.g. fixing review comments or CI failures), **amend** (`git commit --amend`) or **interactive-rebase/squash** locally and force-push with lease (`git push --force-with-lease`) rather than adding `"fix again"` commits.
+  - Never create merge commits (`git merge`); always rebase onto `main` (`git rebase origin/main`) and use rebase-merge on GitHub.
+- **Conventional Commits**:
+  - Every commit subject MUST match `<type>[optional (scope)][!]: <imperative summary>` (enforced by `.githooks/commit-msg`).
+  - Allowed types: `feat`, `fix`, `docs`, `chore`, `ci`, `test`, `refactor`.
+  - Enable the local hook with `make setup-hooks`.
 - **Local Install**: Use `make install-local` (or `./scripts/local-release.sh`), which gates installation on a clean working tree and passing checks, and embeds `<version>+<short-sha>`.
-- **Official Releases**: Update `CHANGELOG.md`, tag `vX.Y.Z`, and push the tag to trigger the GitHub Release workflow.
+- **Official Releases**: Update `CHANGELOG.md` (move `[Unreleased]` under `## [X.Y.Z] - YYYY-MM-DD`), merge to `main`, tag `vX.Y.Z`, and push the tag to trigger the GitHub Release workflow.
