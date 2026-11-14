@@ -30,9 +30,24 @@ pub fn open_in_new_tab(dir: &Path) -> Result<String, String> {
 
     match backend {
         TerminalBackend::Ghostty => {
-            let arg = format!("--working-directory={dir_str}");
-            run_detached("open", &["-na", "Ghostty", "--args", &arg])?;
-            Ok(format!("Opened {} in Ghostty", dir.display()))
+            let script = r#"on run argv
+    set targetDir to item 1 of argv
+    tell application "Ghostty"
+        activate
+        set cfg to new surface configuration
+        set initial working directory of cfg to targetDir
+        if (count of windows) > 0 then
+            new tab in front window with configuration cfg
+        else
+            new window with configuration cfg
+        end if
+    end tell
+end run"#;
+            if run_detached("osascript", &["-e", script, &dir_str]).is_err() {
+                // Fallback for older Ghostty versions without AppleScript support (no -n flag)
+                run_detached("open", &["-a", "Ghostty", &dir_str])?;
+            }
+            Ok(format!("Opened {} in Ghostty tab", dir.display()))
         }
         TerminalBackend::AppleTerminal => {
             let script = r#"on run argv

@@ -109,7 +109,7 @@ Two-pane layout (responsive to terminal width, with a bottom keybinding help bar
 ## 6. Opening a Project in a New Terminal Tab (macOS)
 
 Auto-detects `$TERM_PROGRAM` (zero user setup):
-- **Ghostty** (`TERM_PROGRAM=ghostty`): Uses `open -na Ghostty --args --working-directory=<dir>` or Ghostty tab/window launch (note: Ghostty on macOS does not yet expose an AppleScript `new tab` command without Accessibility permissions; `open -na Ghostty --args --working-directory=<dir>` opens cleanly without requiring Accessibility permissions).
+- **Ghostty** (`TERM_PROGRAM=ghostty`): Uses Ghostty's AppleScript dictionary (`osascript` `new tab in front window with configuration` / `initial working directory`) to open a new tab in the existing Ghostty instance (falling back to `open -a Ghostty <dir>` on older versions).
 - **Terminal.app** (`TERM_PROGRAM=Apple_Terminal`): Uses `osascript` to open a new tab in the front window and `cd` to `<dir>`.
 - **iTerm2** (`TERM_PROGRAM=iTerm.app`): Uses `osascript` to create a new tab in the current window with `cd` to `<dir>`.
 - **WezTerm** (`TERM_PROGRAM=WezTerm`): Uses `wezterm cli spawn --cwd <dir>`.
