@@ -32,10 +32,9 @@ Running `lazyproject` in any directory (or passing a path `lazyproject [PATH]`) 
 - **Classification**:
   - **Git Project**: Depth-1 directory containing a `.git` entry (directory or file, supporting worktrees/submodules).
   - **Non-Git Directory**: Depth-1 non-hidden directory without `.git`.
-- **Non-Git Collapsing**:
-  - Non-git directories are hidden by default behind a single summary row at the bottom of the project list:
-    `+ N projects not on Git (press Enter or Space to expand)`
-  - Expanding reveals the non-git directories (with their last modified time and detected toolchain markers if any). Collapsing hides them again.
+- **Non-Git Visibility**:
+  - Non-git directories are hidden by default, with their count shown in the Projects pane title (`(+N non-git, n to show)`).
+  - Pressing `n` anywhere toggles showing/hiding non-git directories in the table.
 
 ---
 
@@ -74,7 +73,7 @@ Two-pane layout (responsive to terminal width, with a bottom keybinding help bar
    - Search/filter indicator when filtering (`/`)
    - Non-git projects hidden by default with a footer/summary indicator (`+N non-git`), toggled globally with `n`.
 2. **Right Pane — Project Inspector**:
-   - **Summary**: Full path, last activity, remote host & sanitized URL.
+   - **Summary**: Full path, last activity, disk usage & safely reclaimable deps/build breakdown, remote host & sanitized URL, and any fetch error.
    - **Git Status**: Branch, tracking upstream, ahead/behind counts, staged/modified/untracked/conflicted counts, and last 3 commits (short SHA, relative time, subject).
    - **Toolchain & Platform**:
      - **Mise**: Parsed from `mise.toml`, `.mise.toml`, or `.tool-versions` (shows tools & pinned versions, e.g., `node 22.1.0`, `rust 1.82.0`).
@@ -94,7 +93,7 @@ Two-pane layout (responsive to terminal width, with a bottom keybinding help bar
 | `g` / `Home` | Jump to top |
 | `G` / `End` | Jump to bottom |
 | `n` | Toggle showing/hiding non-Git directories |
-| `Enter` | Toggle focus / scroll Inspector pane |
+| `Enter` / `Tab` | Focus / unfocus Inspector pane (`j`/`k` to scroll, `Esc` to return) |
 | `o` | Open selected project directory in a new terminal tab |
 | `f` | Fetch remote for selected git project (`git fetch --prune --no-tags` or `git fetch`) |
 | `F` | Fetch remotes for all git projects (concurrently) |

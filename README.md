@@ -7,7 +7,9 @@ Run `lazyproject` in your projects folder to see:
 - **Where remotes are ahead** (so you sync before making conflicting changes)
 - **Remote host & branch status** (GitHub, GitLab, Bitbucket, local-only)
 - **Required toolchains & package managers** (`mise.toml`, `.tool-versions`, `package.json` + lockfiles, `Cargo.toml`, `pyproject.toml`, `go.mod`)
-- **Non-git folders** neatly collapsed at the bottom (`+ N projects not on Git`) until expanded
+- **Disk & reclaimable space** (computed asynchronously after startup, highlighting `node_modules`, `target`, `.venv`, etc.)
+- **Live fetch status** (per-row spinner and error indicators when manually fetching)
+- **Non-git folders** hidden by default and toggled anytime with `n`
 
 > **Read-only by design:** `lazyproject` never modifies your repositories or runs `git fetch` on startup. Remote fetches only happen when you explicitly press `f` (selected) or `F` (all).
 
