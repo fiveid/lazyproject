@@ -40,6 +40,6 @@ else
 fi
 
 echo "==> Installing lazyproject (version+$SHORT_SHA) to ~/.cargo/bin..."
-LAZYPROJECT_BUILD_SHA="$SHORT_SHA" cargo install --path . --locked --force
+LAZYPROJECT_BUILD_SHA="$SHORT_SHA" cargo install --path . --locked --offline --force
 
 echo "==> Installed: $(lazyproject --version)"
